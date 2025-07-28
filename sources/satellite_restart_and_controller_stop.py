@@ -128,14 +128,14 @@ class HostInfo:
 
 
 def main(
-    interactive=False,
-    dry_run=False,
-    ssl=False,
-    uri="local",
-    stop_controller=True,
-    restart_satellites=True,
-    stop_drbd=False,
-    start_drbd=False,
+    interactive,
+    dry_run,
+    ssl,
+    uri,
+    stop_controller,
+    restart_satellites,
+    stop_drbd,
+    start_drbd,
 ):
     session_factory = (
         (lambda: XenAPI.xapi_local()) if uri == "local"
