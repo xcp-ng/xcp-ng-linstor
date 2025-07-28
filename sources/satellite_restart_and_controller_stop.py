@@ -3,6 +3,7 @@
 from __future__ import print_function
 
 import argparse
+import atexit
 import getpass
 import os
 import sys
@@ -141,12 +142,12 @@ def main(
         else lambda: XenAPI.Session(uri, ignore_ssl=not ssl)
     )
 
-    session = None
     try:
         session = session_factory()
         session.xenapi.login_with_password(
             "root", "" if uri == "local" else get_password(), "", SCRIPT_NAME
         )
+        atexit.register(session.xenapi.session.logout)
         hosts = set()
         for sr_ref in session.xenapi.SR.get_all():
             if session.xenapi.SR.get_type(sr_ref) != "linstor":
@@ -195,10 +196,6 @@ def main(
     except Exception as e:
         eprint("[ERROR]: {}".format(e))
         raise e
-    finally:
-        if session is not None:
-            session.xenapi.session.logout()
-        return 0
 
 
 if __name__ == "__main__":
