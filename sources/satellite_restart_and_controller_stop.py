@@ -14,6 +14,34 @@ SCRIPT_NAME = "satellite_restart_and_controller_stop"
 SERVICE_PLUGIN = "service.py"
 
 
+class SingletonMeta(type):
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            instance = super().__call__(*args, **kwargs)
+            cls._instances[cls] = instance
+        return cls._instances[cls]
+
+
+class HostRecs(metaclass=SingletonMeta):
+    hosts_recs = None
+
+    def get_host(self, session, ref):
+        if self.hosts_recs is None:
+            self.hosts_recs = session.xenapi.host.get_all_records()
+        return self.hosts_recs[ref]
+
+
+class PBDRecs(metaclass=SingletonMeta):
+    pbd_recs = None
+
+    def get_pbd(self, session, ref):
+        if self.pbd_recs is None:
+            self.pbd_recs = session.xenapi.PBD.get_all_records()
+        return self.pbd_recs[ref]
+
+
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
@@ -77,8 +105,10 @@ class HostInfo:
 
     def __init__(self, session, ref):
         self.ref = ref
-        self.hostname = session.xenapi.host.get_hostname(ref)
-        self.uuid = session.xenapi.host.get_uuid(ref)
+
+        host_rec = HostRecs().get_host(session, ref)
+        self.hostname = host_rec["hostname"]
+        self.uuid = host_rec["uuid"]
         self.has_controller_running = (
             session.xenapi.host.call_plugin(
                 ref, self.LINSTOR_PLUGIN, "hasControllerRunning", {}
@@ -152,7 +182,7 @@ def main(
         for _sr_ref, sr_rec in session.xenapi.SR.get_all_records_where('field "type" = "linstor"').items():
             print("SR: {} ({})".format(sr_rec["name_label"], sr_rec["uuid"],))
             for pbd_ref in sr_rec["PBDs"]:
-                host_ref = session.xenapi.PBD.get_host(pbd_ref)
+                host_ref = PBDRecs().get_pbd(session, pbd_ref)["host"]
                 hosts.add(HostInfo(session, host_ref))
         hosts = sorted(hosts, key=lambda host: host.uuid)
         if stop_drbd:
