@@ -149,16 +149,9 @@ def main(
         )
         atexit.register(session.xenapi.session.logout)
         hosts = set()
-        for sr_ref in session.xenapi.SR.get_all():
-            if session.xenapi.SR.get_type(sr_ref) != "linstor":
-                continue
-            print(
-                "SR: {} ({})".format(
-                    session.xenapi.SR.get_name_label(sr_ref),
-                    session.xenapi.SR.get_uuid(sr_ref),
-                )
-            )
-            for pbd_ref in session.xenapi.SR.get_PBDs(sr_ref):
+        for _sr_ref, sr_rec in session.xenapi.SR.get_all_records_where('field "type" = "linstor"').items():
+            print("SR: {} ({})".format(sr_rec["name_label"], sr_rec["uuid"],))
+            for pbd_ref in sr_rec["PBDs"]:
                 host_ref = session.xenapi.PBD.get_host(pbd_ref)
                 hosts.add(HostInfo(session, host_ref))
         hosts = sorted(hosts, key=lambda host: host.uuid)
