@@ -156,7 +156,7 @@ def get_status(remote_host: str = "") -> List[JSON]:
     )
 
 
-def get_oos_status(
+def get_oos_statuses(
     lazy: bool = False,
     oos_only: bool = False,
     resource: str = "",
@@ -209,29 +209,27 @@ def main(
     reports: List[ResourceStatus] = []
     for host in hosts:
         remote_host = host.ip if host.ip != host.from_host.ip else ""
-        statuses = get_oos_status(lazy=True, resource=resource, remote_host=remote_host)
+        statuses = get_oos_statuses(lazy=True, resource=resource, remote_host=remote_host)
 
-        for s in statuses:
-            verify_resource(s, remote_host=remote_host)
+        for status in statuses:
+            verify_resource(status, remote_host=remote_host)
 
-        statuses = get_oos_status(
-            lazy=False, oos_only=True, resource=resource, remote_host=remote_host
-        )
+        statuses = get_oos_statuses(lazy=False, oos_only=True, resource=resource, remote_host=remote_host)
 
-        for s in statuses:
+        for status in statuses:
             logging.info(
                 "resource `%s` on `%s` is out of sync by %s",
-                s.resource, s.peer.hostname, s.out_of_sync
+                status.resource, status.peer.hostname, status.out_of_sync
             )
-            all_statuses.setdefault(s.resource, []).append(s)
+            all_statuses.setdefault(status.resource, []).append(status)
 
-    for resource_name, status_list in all_statuses.items():
+    for resource_name, statuses in all_statuses.items():
         msg = f"{resource} is reported out-of-sync by:"
         counts: Dict[ResourceStatus, int] = {}
-        for s in status_list:
-            counts[s] = counts.get(s, 0) + 1
+        for status in statuses:
+            counts[status] = counts.get(status, 0) + 1
             msg += "\n\t{} on {} by {}".format(
-                s.peer.from_host.hostname, s.peer.hostname, s.out_of_sync
+                status.peer.from_host.hostname, status.peer.hostname, status.out_of_sync
             )
         logger.info(msg)
 
