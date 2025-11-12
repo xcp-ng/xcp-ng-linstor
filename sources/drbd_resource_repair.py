@@ -4,7 +4,6 @@ import logging
 import os
 import shlex
 import subprocess
-import sys
 from functools import lru_cache
 
 from typing import Any, Dict, Iterator, List, Optional, Set, Union
@@ -278,11 +277,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     DRY_RUN = args.dry_run
 
-    script_name = os.path.basename(sys.argv[0])
     pid = os.getpid()
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), None),
-        format=f"%(asctime)s {script_name}: [{pid}] %(levelname)-8s %(message)s",
+        format=f"%(asctime)s {SCRIPT_NAME}: [{pid}] %(levelname)-8s %(message)s",
         datefmt="%b %e %H:%M:%S"
     )
     logger = logging.getLogger(__name__)
