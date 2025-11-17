@@ -169,7 +169,7 @@ def get_oos_statuses(
     )
 
 
-def verify_resource(status: ResourceStatus, remote_host: str = "") -> None:
+def drbd_verify_resource(status: ResourceStatus, remote_host: str = "") -> None:
     run_command(
         DRBD_VERIFY.format(resource=status.resource, peer=status.peer.hostname),
         remote_host=remote_host,
@@ -180,7 +180,7 @@ def verify_resource(status: ResourceStatus, remote_host: str = "") -> None:
     )
 
 
-def resync_resource(
+def drbd_resync_resource(
     status: ResourceStatus, local: bool = False, remote_host: str = ""
 ) -> None:
     cmd = DRBD_INVALIDATE if local else DRBD_INVALIDATE_REMOTE
@@ -211,7 +211,7 @@ def main(
         statuses = get_oos_statuses(lazy=True, resource=resource, remote_host=remote_host)
 
         for status in statuses:
-            verify_resource(status, remote_host=remote_host)
+            drbd_verify_resource(status, remote_host=remote_host)
 
         statuses = get_oos_statuses(lazy=False, oos_only=True, resource=resource, remote_host=remote_host)
 
@@ -253,10 +253,7 @@ def main(
         if verify_only:
             continue
 
-        resync_resource(
-            top_resource,
-            remote_host=top_resource.peer.from_host.ip,
-        )
+        drbd_resync_resource(top_resource, remote_host=top_resource.peer.from_host.ip)
 
     if print_report:
         print(json.dumps(reports, default=lambda o: o.to_json()))
