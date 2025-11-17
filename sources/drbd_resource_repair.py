@@ -37,7 +37,7 @@ def run_command(cmd: str, ignore_dry_run: bool = False, remote_host: str = "") -
         raise e
 
 
-@lru_cache()
+@cache()
 def get_hostname(ip: str) -> str:
     return run_command("hostname", ignore_dry_run=True, remote_host=ip)
 
@@ -188,7 +188,10 @@ def drbd_resync_resource(
         cmd.format(resource=status.resource, peer=status.peer.hostname),
         remote_host=remote_host,
     )
-    run_command(DRBD_WAIT_SYNC.format(resource=status.resource,))
+    run_command(
+        DRBD_WAIT_SYNC.format(resource=status.resource),
+        remote_host=remote_host,
+    )
 
 
 def get_all_hosts() -> Set[LinstorPeer]:
