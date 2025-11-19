@@ -6,16 +6,18 @@ import shlex
 import subprocess
 from functools import lru_cache
 
-from typing import Any, Dict, Iterator, List, Optional, Set, Union
+from typing import Any, Dict, Iterator, List, Optional, Set, Union, cast
 
 SCRIPT_NAME = "drbd_resource_repair"
-DRBD_STATUS = "drbdsetup status all --json"
-DRBD_VERIFY = "drbdadm verify {resource}:{peer}/0"
-DRBD_WAIT_SYNC = "drbdadm wait-sync {resource}"
-DRBD_INVALIDATE = "drbdadm invalidate {resource}:{peer}/0 --reset-bitmap=no"
-DRBD_INVALIDATE_REMOTE = (
-    "drbdadm invalidate-remote {resource}:{peer}/0 --reset-bitmap=no"
+DRBD_CMD_STATUS = "drbdsetup status all --json"
+DRBD_CMD_VERIFY = "drbdadm verify {resource_name}:{peer}/0"
+DRBD_CMD_WAIT_SYNC = "drbdadm wait-sync {resource_name}"
+DRBD_CMD_INVALIDATE = "drbdadm invalidate {resource_name}:{peer}/0 --reset-bitmap=no"
+DRBD_CMD_INVALIDATE_REMOTE = (
+    "drbdadm invalidate-remote {resource_name}:{peer}/0 --reset-bitmap=no"
 )
+
+logger = logging.getLogger(__name__)
 
 
 def run_command(cmd: str, ignore_dry_run: bool = False, remote_host: str = "") -> str:
@@ -37,9 +39,18 @@ def run_command(cmd: str, ignore_dry_run: bool = False, remote_host: str = "") -
         raise e
 
 
-@cache()
+def run_write_command(cmd: str, remote_host: str = "") -> str:
+    return run_command(cmd, ignore_dry_run=False, remote_host=remote_host)
+
+
+def run_read_command(cmd: str, remote_host: str = "") -> str:
+    return run_command(cmd, ignore_dry_run=True, remote_host=remote_host)
+
+
+# FIXME Change to @cache when upgrading to python>=3.9
+@lru_cache()
 def get_hostname(ip: str) -> str:
-    return run_command("hostname", ignore_dry_run=True, remote_host=ip)
+    return run_read_command("hostname", remote_host=ip)
 
 
 class Host:
@@ -56,12 +67,11 @@ class Host:
     def __eq__(self, other: Any) -> bool:
         return (
             isinstance(other, Host)
-            and self.ip == other.ip
             and self.hostname == other.hostname
         )
 
     def __hash__(self) -> int:
-        return hash((self.ip, self.hostname))
+        return hash(self.hostname)
 
     def to_json(self) -> Dict[str, Any]:
         return self.__dict__
@@ -77,29 +87,43 @@ class LinstorPeer(Host):
     # Intentionally not overloading eq and hash since the from_host
     #  does not change the peer
 
-
-class ResourceStatus:
-    def __init__(self, resource: str, peer: LinstorPeer, out_of_sync: int):
-        self.resource = resource
+class ResourceStatusKey:
+    def __init__(self, name: str, peer: LinstorPeer):
+        self.name = name
         self.peer = peer
-        self.out_of_sync = out_of_sync
 
     def __str__(self) -> str:
-        return ",".join([self.resource, str(self.peer), str(self.out_of_sync)])
+        return f"{self.name}:{self.peer}"
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other):
         return (
-            isinstance(other, ResourceStatus)
-            and self.resource == other.resource
+            isinstance(other, ResourceStatusKey)
+            and self.name == other.name
             and self.peer == other.peer
-            and self.out_of_sync == other.out_of_sync
         )
 
     def __hash__(self) -> int:
-        return hash((self.resource, self.peer, self.out_of_sync))
+        return hash((self.name, self.peer))
 
     def to_json(self) -> Dict[str, Any]:
         return self.__dict__
+
+
+class ResourceStatus(ResourceStatusKey):
+    def __init__(self, name: str, peer: LinstorPeer, out_of_sync: int):
+        super().__init__(name, peer)
+        self.out_of_sync = out_of_sync
+
+    @property
+    def key(self) -> str:
+        return super().__str__()
+
+    def __str__(self) -> str:
+        return f"{self.key},{self.out_of_sync}"
+
+    def to_json(self) -> Dict[str, Any]:
+        return self.__dict__
+
 
 JSON = Dict[str, Any]
 StatusUnion = Union[List[ResourceStatus], Iterator[ResourceStatus]]
@@ -117,14 +141,13 @@ def get_peer_from_connection(connection: JSON) -> Optional[LinstorPeer]:
 
 def get_bad_resources_from_status(
     status: List[JSON],
-    lazy: bool = False,
     oos_only: bool = False,
     resource_name: str = "",
 ) -> StatusUnion:
-    statuses = (
+    return (
         ResourceStatus(
-            resource=resource.get("name", ""),
-            peer=get_peer_from_connection(connection),  # type: ignore
+            name=resource.get("name", ""),
+            peer=cast(LinstorPeer, get_peer_from_connection(connection)),
             out_of_sync=peer_device.get("out-of-sync", 0),
         )
         for resource in status
@@ -136,7 +159,6 @@ def get_bad_resources_from_status(
             and get_peer_from_connection(connection)
         )
     )
-    return statuses if lazy else list(statuses)
 
 
 def get_peers_from_status(status: List[JSON]) -> Set[LinstorPeer]:
@@ -151,50 +173,48 @@ def get_peers_from_status(status: List[JSON]) -> Set[LinstorPeer]:
 
 def get_status(remote_host: str = "") -> List[JSON]:
     return json.loads(
-        run_command(DRBD_STATUS, ignore_dry_run=True, remote_host=remote_host)
+        run_read_command(DRBD_CMD_STATUS, remote_host=remote_host)
     )
 
 
 def get_oos_statuses(
-    lazy: bool = False,
     oos_only: bool = False,
-    resource: str = "",
+    resource_name: str = "",
     remote_host: str = "",
 ) -> StatusUnion:
     return get_bad_resources_from_status(
         get_status(remote_host),
-        lazy=lazy,
         oos_only=oos_only,
-        resource_name=resource,
+        resource_name=resource_name,
     )
 
 
-def drbd_verify_resource(status: ResourceStatus, remote_host: str = "") -> None:
-    run_command(
-        DRBD_VERIFY.format(resource=status.resource, peer=status.peer.hostname),
+def drbd_verify_resource(resource: ResourceStatus, remote_host: str = "") -> None:
+    run_write_command(
+        DRBD_CMD_VERIFY.format(resource_name=resource.name, peer=resource.peer.hostname),
         remote_host=remote_host,
     )
-    run_command(
-        DRBD_WAIT_SYNC.format(resource=status.resource),
+    run_read_command(
+        DRBD_CMD_WAIT_SYNC.format(resource_name=resource.name),
         remote_host=remote_host,
     )
 
 
 def drbd_resync_resource(
-    status: ResourceStatus, local: bool = False, remote_host: str = ""
+    resource: ResourceStatus, local: bool = False, remote_host: str = ""
 ) -> None:
-    cmd = DRBD_INVALIDATE if local else DRBD_INVALIDATE_REMOTE
-    run_command(
-        cmd.format(resource=status.resource, peer=status.peer.hostname),
+    cmd = DRBD_CMD_INVALIDATE if local else DRBD_CMD_INVALIDATE_REMOTE
+    run_write_command(
+        cmd.format(resource_name=resource.name, peer=resource.peer.hostname),
         remote_host=remote_host,
     )
-    run_command(
-        DRBD_WAIT_SYNC.format(resource=status.resource),
+    run_read_command(
+        DRBD_CMD_WAIT_SYNC.format(resource_name=resource.name),
         remote_host=remote_host,
     )
 
 
-def get_all_hosts() -> Set[LinstorPeer]:
+def get_all_peers() -> Set[LinstorPeer]:
     hosts = get_peers_from_status(get_status())
     local_ip = next(iter(hosts)).from_host.ip
     hosts.add(LinstorPeer(local_ip, local_ip))
@@ -202,36 +222,35 @@ def get_all_hosts() -> Set[LinstorPeer]:
 
 
 def main(
-    resource: str = "",
+    resource_name: str = "",
     print_report: bool = False,
     verify_only: bool = False
 ) -> None:
-    hosts = get_all_hosts()
-    all_statuses: Dict[str, List[ResourceStatus]] = {}
+    hosts = get_all_peers()
+    all_resources: Dict[str, List[ResourceStatus]] = {}
     reports: List[ResourceStatus] = []
     for host in hosts:
         remote_host = host.ip if host.ip != host.from_host.ip else ""
-        statuses = get_oos_statuses(lazy=True, resource=resource, remote_host=remote_host)
 
-        for status in statuses:
+        for status in list(get_oos_statuses(resource_name=resource_name, remote_host=remote_host)):
             drbd_verify_resource(status, remote_host=remote_host)
 
-        statuses = get_oos_statuses(lazy=False, oos_only=True, resource=resource, remote_host=remote_host)
+        resources = get_oos_statuses(oos_only=True, resource_name=resource_name, remote_host=remote_host)
 
-        for status in statuses:
+        for resource in resources:
             logging.info(
                 "resource `%s` on `%s` is out of sync by %s",
-                status.resource, status.peer.hostname, status.out_of_sync
+                resource.name, resource.peer.hostname, resource.out_of_sync
             )
-            all_statuses.setdefault(status.resource, []).append(status)
+            all_resources.setdefault(resource.name, []).append(resource)
 
-    for resource_name, statuses in all_statuses.items():
-        msg = f"{resource} is reported out-of-sync by:"
+    for resource_name, resources in all_resources.items():
+        msg = f"{resource_name} is reported out-of-sync by:"
         counts: Dict[ResourceStatus, int] = {}
-        for status in statuses:
-            counts[status] = counts.get(status, 0) + 1
+        for resource in resources:
+            counts[resource] = counts.get(resource, 0) + 1
             msg += "\n\t{} on {} by {}".format(
-                status.peer.from_host.hostname, status.peer.hostname, status.out_of_sync
+                resource.peer.from_host.hostname, resource.peer.hostname, resource.out_of_sync
             )
         logger.info(msg)
 
@@ -249,7 +268,7 @@ def main(
         top_resource = top_resources[0]
         logger.info(
             "Designed %s as the host with the corrupted %s",
-            top_resource.peer.hostname, top_resource.resource
+            top_resource.peer.hostname, top_resource.name
         )
         reports.append(top_resource)
 
@@ -277,16 +296,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
     DRY_RUN = args.dry_run
 
-    pid = os.getpid()
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), None),
-        format=f"%(asctime)s {SCRIPT_NAME}: [{pid}] %(levelname)-8s %(message)s",
+        format=f"%(asctime)s {SCRIPT_NAME}: [{os.getpid()}] %(levelname)-8s %(message)s",
         datefmt="%b %e %H:%M:%S"
     )
-    logger = logging.getLogger(__name__)
-
     main(
-        resource=args.resource,
+        resource_name=args.resource,
         print_report=args.print,
-        verify_only = args.verify_only
+        verify_only=args.verify_only
     )
