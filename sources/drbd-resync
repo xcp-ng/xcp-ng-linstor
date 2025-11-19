@@ -89,7 +89,14 @@ class LinstorPeer(Host):
     # Intentionally not overloading eq and hash since the from_host
     #  does not change the peer
 
-class ResourceStatusKey:
+class ResourceKey:
+    """Represents the identifying pair of a resource's name and peer hostname.
+
+    Attributes:
+        name (str): The resource's name.
+        peer (LinstorPeer): The peer on which the resource instance resides.
+    """
+
     def __init__(self, name: str, peer: LinstorPeer):
         self.name = name
         self.peer = peer
@@ -99,7 +106,7 @@ class ResourceStatusKey:
 
     def __eq__(self, other):
         return (
-            isinstance(other, ResourceStatusKey)
+            isinstance(other, ResourceKey)
             and self.name == other.name
             and self.peer == other.peer
         )
@@ -111,7 +118,21 @@ class ResourceStatusKey:
         return self.__dict__
 
 
-class ResourceStatus(ResourceStatusKey):
+class ResourceStatus(ResourceKey):
+    """Represents a resource along with its synchronization status.
+
+    Extends:
+        ResourceKey
+
+    Attributes:
+        out_of_sync (int): Amount of data out of sync, in kilobytes (KB).
+            This value represents the replication lag between the different nodes.
+            It is gathered from LINSTOR's reported 'out-of-sync' metric.
+
+    Properties:
+        key (str): A string representation of the resource key (``name:peer``).
+    """
+
     def __init__(self, name: str, peer: LinstorPeer, out_of_sync: int):
         super().__init__(name, peer)
         self.out_of_sync = out_of_sync
@@ -259,6 +280,15 @@ def main(
         max_count = max(counts.values())
         top_resources = [s for s, c in counts.items() if c == max_count]
 
+        # Each host will check which peer's resource has different values,
+        #  admitting 2 hosts with a sane resource and 1 with corrupted data:
+        #  The corrupted one will report each as out-of-sync,
+        #  while the sane ones will report the corrupted one as out-of-sync;
+        #  this will result in 2 reports for the corrupted one
+        #  and one report for each sane host. We can infer from this that the one with
+        #  the most reports is the corrupted one.
+        #  In the event of a tie, it's safer to leave it to human decision
+        #  since which is which can't be inferred.
         if len(top_resources) > 1:
             logger.error(
                 "Tie detected: multiple hosts with highest reports (%d): %s. Skipping.",
