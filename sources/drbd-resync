@@ -8,7 +8,7 @@ import shlex
 import subprocess
 from functools import lru_cache
 
-from typing import Any, Dict, Iterator, List, Optional, Set, Union, cast
+from typing import Any, Dict, Iterator, List, Optional, Set, cast
 
 SCRIPT_NAME = "drbd-resync"
 DRBD_CMD_STATUS = "drbdsetup status all --json"
@@ -20,6 +20,8 @@ DRBD_CMD_INVALIDATE_REMOTE = (
 )
 
 logger = logging.getLogger(__name__)
+
+JSON = Dict[str, Any]
 
 
 def run_command(cmd: str, ignore_dry_run: bool = False, remote_host: str = "") -> str:
@@ -75,7 +77,7 @@ class Host:
     def __hash__(self) -> int:
         return hash(self.hostname)
 
-    def to_json(self) -> Dict[str, Any]:
+    def to_json(self) -> JSON:
         return self.__dict__
 
 class LinstorPeer(Host):
@@ -114,7 +116,7 @@ class ResourceKey:
     def __hash__(self) -> int:
         return hash((self.name, self.peer))
 
-    def to_json(self) -> Dict[str, Any]:
+    def to_json(self) -> JSON:
         return self.__dict__
 
 
@@ -144,12 +146,8 @@ class ResourceStatus(ResourceKey):
     def __str__(self) -> str:
         return f"{self.key},{self.out_of_sync}"
 
-    def to_json(self) -> Dict[str, Any]:
+    def to_json(self) -> JSON:
         return self.__dict__
-
-
-JSON = Dict[str, Any]
-StatusUnion = Union[List[ResourceStatus], Iterator[ResourceStatus]]
 
 
 def get_peer_from_connection(connection: JSON) -> Optional[LinstorPeer]:
@@ -162,11 +160,11 @@ def get_peer_from_connection(connection: JSON) -> Optional[LinstorPeer]:
     return None
 
 
-def get_bad_resources_from_status(
+def get_resources_from_status(
     status: List[JSON],
     oos_only: bool = False,
     resource_name: str = "",
-) -> StatusUnion:
+) -> Iterator[ResourceStatus]:
     return (
         ResourceStatus(
             name=resource.get("name", ""),
@@ -200,12 +198,12 @@ def get_status(remote_host: str = "") -> List[JSON]:
     )
 
 
-def get_oos_statuses(
+def get_resources(
     oos_only: bool = False,
     resource_name: str = "",
     remote_host: str = "",
-) -> StatusUnion:
-    return get_bad_resources_from_status(
+) -> Iterator[ResourceStatus]:
+    return get_resources_from_status(
         get_status(remote_host),
         oos_only=oos_only,
         resource_name=resource_name,
@@ -255,12 +253,10 @@ def main(
     for host in hosts:
         remote_host = host.ip if host.ip != host.from_host.ip else ""
 
-        for status in list(get_oos_statuses(resource_name=resource_name, remote_host=remote_host)):
+        for status in list(get_resources(resource_name=resource_name, remote_host=remote_host)):
             drbd_verify_resource(status, remote_host=remote_host)
 
-        resources = get_oos_statuses(oos_only=True, resource_name=resource_name, remote_host=remote_host)
-
-        for resource in resources:
+        for resource in get_resources(oos_only=True, resource_name=resource_name, remote_host=remote_host):
             logging.info(
                 "resource `%s` on `%s` is out of sync by %s",
                 resource.name, resource.peer.hostname, resource.out_of_sync
