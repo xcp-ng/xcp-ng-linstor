@@ -8,7 +8,7 @@ import shlex
 import subprocess
 from functools import lru_cache
 
-from typing import Any, Dict, Iterator, List, Optional, Set, cast
+from typing import Any, Dict, Iterator, List, Optional, Set, Union, cast
 
 SCRIPT_NAME = "drbd-resync"
 DRBD_CMD_STATUS = "drbdsetup status all --json"
@@ -163,7 +163,8 @@ def get_peer_from_connection(connection: JSON) -> Optional[LinstorPeer]:
 def get_resources_from_status(
     status: List[JSON],
     oos_only: bool = False,
-    resource_name: str = "",
+    include: Union[List[str], None] = None,
+    exclude: Union[List[str], None] = None
 ) -> Iterator[ResourceStatus]:
     return (
         ResourceStatus(
@@ -176,7 +177,8 @@ def get_resources_from_status(
         for peer_device in connection.get("peer_devices", [])
         if (
             (not oos_only or peer_device.get("out-of-sync", 0) > 0)
-            and (not resource_name or resource.get("name", "") == resource_name)
+            and (not include or any(resource.get("name", "").startswith(p) for p in include))
+            and (not exclude or all(not resource.get("name", "").startswith(p) for p in exclude))
             and get_peer_from_connection(connection)
         )
     )
@@ -200,13 +202,15 @@ def get_status(remote_host: str = "") -> List[JSON]:
 
 def get_resources(
     oos_only: bool = False,
-    resource_name: str = "",
+    include: Union[List[str], None] = None,
+    exclude: Union[List[str], None] = None,
     remote_host: str = "",
 ) -> Iterator[ResourceStatus]:
     return get_resources_from_status(
         get_status(remote_host),
         oos_only=oos_only,
-        resource_name=resource_name,
+        include=include,
+        exclude=exclude
     )
 
 
@@ -243,7 +247,8 @@ def get_all_peers() -> Set[LinstorPeer]:
 
 
 def main(
-    resource_name: str = "",
+    include: Union[List[str], None] = None,
+    exclude: Union[List[str], None] = None,
     print_report: bool = False,
     verify_only: bool = False
 ) -> None:
@@ -253,10 +258,10 @@ def main(
     for host in hosts:
         remote_host = host.ip if host.ip != host.from_host.ip else ""
 
-        for status in list(get_resources(resource_name=resource_name, remote_host=remote_host)):
-            drbd_verify_resource(status, remote_host=remote_host)
+        for resource in list(get_resources(include=include, exclude=exclude, remote_host=remote_host)):
+            drbd_verify_resource(resource, remote_host=remote_host)
 
-        for resource in get_resources(oos_only=True, resource_name=resource_name, remote_host=remote_host):
+        for resource in get_resources(oos_only=True, include=include, exclude=exclude, remote_host=remote_host):
             logging.info(
                 "resource `%s` on `%s` is out of sync by %s",
                 resource.name, resource.peer.hostname, resource.out_of_sync
@@ -313,7 +318,16 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
     parser.add_argument("--print", action="store_true")
-    parser.add_argument("--resource", type=str)
+    parser.add_argument(
+        "--include",
+        action="append",
+        help="resource prefix to include. Can be specified multiple times"
+    )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        help="resource prefix to exclude. Can be specified multiple times"
+    )
     parser.add_argument(
         "--log-level",
         type=lambda x: x.upper(),
@@ -330,7 +344,8 @@ if __name__ == "__main__":
         datefmt="%b %e %H:%M:%S"
     )
     main(
-        resource_name=args.resource,
+        include=args.include,
+        exclude=args.exclude,
         print_report=args.print,
         verify_only=args.verify_only
     )
