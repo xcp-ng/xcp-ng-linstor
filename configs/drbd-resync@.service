@@ -1,0 +1,29 @@
+[Unit]
+Description=DRBD Resync script for resources prefixed by %I
+
+DefaultDependencies=no
+
+Requires=xapi-init-complete.target
+Requires=drbd-reactor.service
+Requires=linstor-satellite.service
+
+After=xapi-init-complete.target
+After=drbd-reactor.service
+After=linstor-satellite.service
+
+
+[Service]
+Type=oneshot
+Restart=no
+RemainAfterExit=no
+
+StandardOutput=file:/var/log/drbd-resync.log
+StandardError=syslog
+SyslogIdentifier=drbd-resync
+SyslogFacility=daemon
+
+# Environment file for extra args
+EnvironmentFile=-/etc/default/drbd-resync
+
+# Additional flags may be added via DRBD_RESYNC_EXTRA_ARGS
+ExecStart=/opt/xensource/bin/drbd-resync --log-level DEBUG --service --print --output /run/drbd-resync/%I.json --include "%i" $DRBD_RESYNC_EXTRA_ARGS
