@@ -62,7 +62,7 @@ class CommandRunner(metaclass=SingletonMeta):
     def check_for_master_change(self) -> None:
         current_master = self.get_current_master()
         if self.master != current_master:
-            logger.error(f"master changed from `{self.master}` to `{current_master}`. Aborting...")
+            logger.error("master changed from `%s` to `%s`. Aborting...", self.master, current_master)
             raise SystemExit(1)
 
     def run_write_command(self, cmd: str, remote_host: str = "") -> str:
@@ -373,6 +373,6 @@ if __name__ == "__main__":
         datefmt="%b %e %H:%M:%S",
     )
 
-    CommandRunner(dry_run=args.dry_run)
+    _ = CommandRunner(dry_run=args.dry_run, ssh_key=args.key)
 
     main(include=args.include, exclude=args.exclude, print_report=args.print, verify_only=args.verify_only)
