@@ -6,6 +6,7 @@ import logging
 import os
 import shlex
 import subprocess
+from collections import Counter
 from functools import lru_cache
 
 from typing import Any, Dict, Iterator, List, Optional, Set, cast
@@ -306,16 +307,15 @@ def main(
 
     for resource_name, resources in all_resources.items():
         msg = f"{resource_name} is reported out-of-sync by:"
-        counts: Dict[ResourceStatus, int] = {}
-        for resource in resources:
-            counts[resource] = counts.get(resource, 0) + 1
+        counts = Counter(resources)
+        for resource, count in counts.items():
             msg += "\n\t{} on {} by {}".format(
                 resource.peer.from_host.hostname, resource.peer.hostname, resource.out_of_sync
             )
         logger.info(msg)
 
-        max_count = max(counts.values())
-        top_resources = [s for s, c in counts.items() if c == max_count]
+        max_count = counts.most_common(1)[0][1]  # [(resource, count)]
+        top_resources = [r for r, c in counts.most_common() if c == max_count]
 
         # Each host will check which peer's resource has different values,
         #  admitting 2 hosts with a sane resource and 1 with corrupted data:
