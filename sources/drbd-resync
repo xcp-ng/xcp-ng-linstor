@@ -34,13 +34,15 @@ class SingletonMeta(type):
 
 
 class CommandRunner(metaclass=SingletonMeta):
-    def __init__(self, dry_run: bool = False):
+    def __init__(self, dry_run: bool = False, ssh_key: Optional[str] = None):
         self.dry_run = dry_run
+        self.ssh_key = ssh_key
         self.master = self.get_current_master()
 
     def run_command(self, cmd: str, ignore_dry_run: bool = False, remote_host: str = "") -> str:
+        with_key = f" -i {shlex.quote(self.ssh_key)}" if self.ssh_key else ""
         if remote_host:
-            cmd = f"ssh root@{shlex.quote(remote_host)} -C {shlex.quote(cmd)}"
+            cmd = f"ssh root@{shlex.quote(remote_host)}{with_key} -C {shlex.quote(cmd)}"
         logger.debug(cmd)
         if self.dry_run and not ignore_dry_run:
             return ""
@@ -285,6 +287,7 @@ def main(
     include: Optional[List[str]] = None,
     exclude: Optional[List[str]] = None,
     print_report: bool = False,
+    output_file: str = "stdout",
     verify_only: bool = False,
 ) -> None:
     hosts = get_all_peers()
@@ -344,7 +347,15 @@ def main(
         drbd_resync_resource(top_resource, remote_host=top_resource.peer.from_host.ip)
 
     if print_report:
-        print(json.dumps(reports, default=lambda o: o.to_json()))
+        report = json.dumps(reports, default=lambda o: o.to_json())
+        if output_file == "stdout":
+            print(report)
+            return
+        dir_path = os.path.dirname(output_file)
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path, exist_ok=True)
+        with open(output_file, 'w') as f:
+            f.write(report)
 
 
 if __name__ == "__main__":
@@ -352,12 +363,15 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
     parser.add_argument("--print", action="store_true")
+    parser.add_argument("--service", action="store_true")
     parser.add_argument(
         "--include", action="append", help="resource prefix to include. Can be specified multiple times"
     )
     parser.add_argument(
         "--exclude", action="append", help="resource prefix to exclude. Can be specified multiple times"
     )
+    parser.add_argument("--output", help="output file to use with --print", default="stdout")
+    parser.add_argument("--key", help="ssh key to use for connection to peers")
     parser.add_argument(
         "--log-level",
         type=lambda x: x.upper(),
@@ -367,12 +381,19 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    log_format = "%(levelname)-8s %(message)s"
+    if not args.service:
+        log_format = f"%(asctime)s {SCRIPT_NAME}: [{os.getpid()}] {log_format}"
     logging.basicConfig(
-        level=getattr(logging, args.log_level.upper(), None),
-        format=f"%(asctime)s {SCRIPT_NAME}: [{os.getpid()}] %(levelname)-8s %(message)s",
-        datefmt="%b %e %H:%M:%S",
+        level=getattr(logging, args.log_level.upper(), None), format=log_format, datefmt="%b %e %H:%M:%S"
     )
 
     _ = CommandRunner(dry_run=args.dry_run, ssh_key=args.key)
 
-    main(include=args.include, exclude=args.exclude, print_report=args.print, verify_only=args.verify_only)
+    main(
+        include=args.include,
+        exclude=args.exclude,
+        print_report=args.print,
+        output_file=args.output,
+        verify_only=args.verify_only,
+    )
