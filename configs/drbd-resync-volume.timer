@@ -1,0 +1,10 @@
+[Unit]
+Description=10 minute timer for drbd-resync on LINSTOR volumes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=10min
+Unit=drbd-resync@xcp-volume.service
+
+[Install]
+WantedBy=timers.target

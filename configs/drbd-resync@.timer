@@ -1,0 +1,10 @@
+[Unit]
+Description=10 minute timer for drbd-resync on %I
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=10min
+Unit=drbd-resync@%i.service
+
+[Install]
+WantedBy=timers.target

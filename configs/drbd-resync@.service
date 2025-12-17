@@ -13,7 +13,6 @@ After=linstor-satellite.service
 
 
 [Service]
-Type=oneshot
 Restart=no
 RemainAfterExit=no
 
@@ -26,4 +25,4 @@ SyslogFacility=daemon
 EnvironmentFile=-/etc/default/drbd-resync
 
 # Additional flags may be added via DRBD_RESYNC_EXTRA_ARGS
-ExecStart=/opt/xensource/bin/drbd-resync --log-level DEBUG --service --print --output /run/drbd-resync/%I.json --include "%i" $DRBD_RESYNC_EXTRA_ARGS
+ExecStart=/opt/xensource/bin/drbd-resync --service --print --output /run/drbd-resync/%I.json --include "%i" $DRBD_RESYNC_EXTRA_ARGS
