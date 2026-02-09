@@ -12,7 +12,7 @@ from functools import lru_cache
 from typing import Any, Dict, Iterator, List, Optional, Set, cast
 
 SCRIPT_NAME = "drbd-resync"
-XE_CMD_POOL_MASTER = "xe pool-list params=master --minimal"
+XE_CMD_POOL_MASTER = "cat /etc/xensource/pool.conf"
 DRBD_CMD_STATUS = "drbdsetup status all --json"
 DRBD_CMD_VERIFY = "drbdadm verify {resource_name}:{peer}/0"
 DRBD_CMD_WAIT_SYNC = "drbdadm wait-sync {resource_name}"
@@ -59,7 +59,11 @@ class CommandRunner(metaclass=SingletonMeta):
             raise
 
     def get_current_master(self) -> str:
-        return self.run_command(XE_CMD_POOL_MASTER, ignore_dry_run=True)
+        master = self.run_command(XE_CMD_POOL_MASTER, ignore_dry_run=True)
+        if "slave" not in master and "master" not in master:
+            logger.error("Failed to determine current master in output: `%s`", master)
+            raise SystemExit(1)
+        return master
 
     def check_for_master_change(self) -> None:
         current_master = self.get_current_master()
